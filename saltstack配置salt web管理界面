@@ -1,0 +1,134 @@
+引用自：https://blog.csdn.net/weixin_41004350/article/details/78493017
+为saltstack配置一个web界面，通过web界面来实现一些管理功能，由于saltstack官方本身时没有web界面的，但是官方通过salt-api来实现了接口，用于广大网友自行设计界面，这里记录下在git-hub上较常见的一个web界面——saltshaker。
+
+
+系统为centos7.2，python版本为2.7
+一。安装
+## 安装api接口
+$ yum install salt-api -y
+
+
+## 添加用户，用户api认证
+$ useradd -M Amos
+
+
+## 添加api的配置文件,同来配置api接口服务的端口和一些设定
+$ vim /etc/salt/master.d/api.conf
+--------------------------------------------------------------------------------------------------
+rest_cherrypy:
+  port: 8000
+  debug: True
+  #ssl_crt: /etc/pki/tls/certs/localhost.crt
+  #ssl_key: /etc/pki/tls/certs/localhost.key
+  disable_ssl: true
+--------------------------------------------------------------------------------------------------
+
+
+## 添加eauth.conf认证配置文件
+$ vim /etc/salt/master.d/eauth.conf
+--------------------------------------------------------------------------------------------------
+external_auth:
+  pam:
+    Amos:
+      - .*
+      - '@wheel'
+      - '@runner'
+--------------------------------------------------------------------------------------------------
+Amos登陆用户名，下面为权限设置，可以根据用户自定义不同的权限。上述为全部权限
+
+
+## 启动salt-api服务
+$ systemctl start salt-api
+
+
+OK，到此，salt-api服务启动，可以查看下端口，是否已经监听8000端口。
+下面进行web界面saltshaker的安装与配置。centos7自带的python为2.7版本。
+
+
+## 先安装python的pip包管理工具，在安装所欲的python库
+$ yum install python-pip
+$ pip install Django==1.8.4 (这里一定要安装指定的1.8。4版本，如果安装最新版1.10以后，代码的写法上会报错)
+$ pip install django-crontab
+$ pip install django-celery
+$ pip install celery
+$ pip install uwsgi 
+$ pip install django-uwsgi
+$ pip install python-devel
+
+
+## 安装rabbitmq
+$ yum install rabbitmq-server
+
+
+## 打开rabbitmq的管理插件
+$ rabbitmq-plugins enable rabbitmq_management
+
+
+## 创建存放日志的文件夹
+$ mkdir -pv /var/log/saltshaker/ 
+
+
+## 下载代码到本地，可以选择用git clone下载，也可以直接下载zip包解压，这里用git
+$ git clone https://github.com/yueyongyue/saltshaker.git
+
+
+## 初始化数据库，这里数据库使用mysql5.6，请提前准备,初始化脚本在下载的项目里：saltshaker-init.sql.txt
+$ mysql -u root -p
+mysql> create database saltshaker;
+mysql> source {project_dir}/saltshaker-init.sql.txt
+mysql> grant all privileges on saltshaker.* to 'saltshaker'@'%' identified by 'saltshaker';
+mysql>  grant all privileges on saltshaker.* to 'saltshaker'@'localhost' identified by 'saltshaker';
+mysql> flush privileges;
+mysql>exit;
+
+
+## 进入项目，修改配置文件的数据库连接和salt-api连接,rabbitmq+celery配置
+$ vim {project_dir}/saltshaker/settings.py
+------------------------------------------------------------------------------------------------------
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql', # Add 'postgresql_psycopg2', 'mysql', 'sqlite3' or 'oracle'.
+        'NAME': 'saltshaker', # Or path to database file if using sqlite3.
+        'USER': 'saltshaker', # Not used with sqlite3.
+        'PASSWORD': 'saltshaker', # Not used with sqlite3.
+        'HOST': '192.168.9.92', # Set to empty string for localhost. Not used with sqlite3.
+        'PORT': '3306', # Set to empty string for default. Not used with sqlite3.
+    }
+}
+
+
+# SaltStack API
+SALT_API_URL = 'http://127.0.0.1:8000'
+SALT_API_USER = 'user'
+SALT_API_PASSWD = 'passwd'
+
+
+# celery + rabbitmq
+platforms.C_FORCE_ROOT = True   # Running a worker with superuser privileges
+djcelery.setup_loader()
+BROKER_HOST = "127.0.0.1"
+BROKER_PORT = 5672
+BROKER_USER = "guest"
+BROKER_PASSWORD = "guest"
+BROKER_VHOST = "/"
+------------------------------------------------------------------------------------------------------
+
+
+## 后台启动celery worker
+$ python manage.py celery worker --loglevel=info -c 5 &>/dev/null 
+
+
+## 添加计划任务用于获取queue队列数
+$ python manage.py crontab add
+
+
+## 后台启动服务,
+$ python manage.py runserver 0.0.0.0:9000 &>/dev/null &
+
+
+OK，到此为止，saltshaker安装完成，现在用浏览器访问 http://localhost:9000 则会出现saltshaker的登陆地址，初始用户和密码为：
+user：admin
+password：admin
+
+
+进去后，可自行修改密码，添加用户等。里面的功能虽并不是完全齐全，但也很不错了，有兴趣的同学，完全可以自行修改代码，自定义页面和功能。
